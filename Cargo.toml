@@ -1,0 +1,12 @@
+[package]
+name = "hdf5file"
+version = "0.1.0"
+authors = ["Takeru Ohta <phjgt308@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+byteorder = "1"
+trackable = "0.2"
+
+[dev-dependencies]
+structopt = "0.2"
