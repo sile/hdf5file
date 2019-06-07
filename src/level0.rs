@@ -110,15 +110,16 @@ impl ObjectHeaderPrefix {
         let _reserved = track!(reader.read_u8())?;
         let header_message_count = track!(reader.read_u16())?;
         dbg!(header_message_count);
-        let messages = (0..header_message_count)
-            .map(|_| track!(HeaderMessage::from_reader(&mut reader)))
-            .collect::<Result<_>>()?;
 
         let object_reference_count = track!(reader.read_u32())?;
         dbg!(object_reference_count);
 
         let object_header_size = track!(reader.read_u32())?;
         dbg!(object_header_size);
+
+        let messages = (0..header_message_count)
+            .map(|_| track!(HeaderMessage::from_reader(&mut reader)))
+            .collect::<Result<_>>()?;
 
         Ok(Self {
             messages,
@@ -128,20 +129,61 @@ impl ObjectHeaderPrefix {
     }
 }
 
+bitflags! {
+    struct HeaderMessageFlags: u8 {
+        const CONSTANT = 0b0000_0001;
+        const SHARED = 0b0000_0010;
+        const UNSHARABLE = 0b0000_0100;
+        const CANNOT_WRITE_IF_UNKNOWN = 0b0000_1000;
+        const SET_5_BIT_IF_UNKNOWN = 0b0001_0000;
+        const UNKNOWN_BUT_MODIFIED = 0b0010_0000;
+        const SHARABLE = 0b0100_0000;
+        const FAIL_IF_UNKNOWN = 0b0100_0000;
+    }
+}
+
 #[derive(Debug)]
 pub struct HeaderMessage {
     kind: u16,
-    flags: u8,
+    flags: HeaderMessageFlags,
     data: Vec<u8>,
 }
 impl HeaderMessage {
     pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
         let kind = track!(reader.read_u16())?;
         let data_len = track!(reader.read_u16())?;
-        let flags = track!(reader.read_u8())?;
+        let flags = HeaderMessageFlags::from_bits_truncate(track!(reader.read_u8())?);
         track!(reader.skip(3))?;
         let data = track!(reader.read_vec(data_len as usize))?;
         Ok(Self { kind, flags, data })
+    }
+}
+
+/// https://support.hdfgroup.org/HDF5/doc/H5.format.html#LocalHeap
+#[derive(Debug)]
+pub struct LocalHeaps {
+    data_segment_size: u64,
+    free_list_head_offset: u64,
+    data_segment_address: u64,
+}
+impl LocalHeaps {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let mut signature = [0; 4];
+        track!(reader.read_bytes(&mut signature))?;
+        track_assert_eq!(&signature, b"HEAP", ErrorKind::InvalidFile);
+
+        let version = track!(reader.read_u8())?;
+        track_assert_eq!(version, 0, ErrorKind::Unsupported);
+        track!(reader.skip(3))?;
+
+        let data_segment_size = track!(reader.read_u64())?;
+        let free_list_head_offset = track!(reader.read_u64())?;
+        let data_segment_address = track!(reader.read_u64())?;
+        Ok(Self {
+            data_segment_size,
+            free_list_head_offset,
+            data_segment_address,
+        })
     }
 }
 
@@ -157,6 +199,18 @@ impl SymbolTableEntry {
     pub fn object_header<R: Read + Seek>(&self, mut reader: R) -> Result<ObjectHeader> {
         track!(reader.seek_to(self.object_header_address))?;
         track!(ObjectHeader::from_reader(reader))
+    }
+
+    pub fn local_heaps<R: Read + Seek>(&self, mut reader: R) -> Result<LocalHeaps> {
+        if let ScratchPad::ObjectHeader {
+            name_heap_address, ..
+        } = self.scratch_pad
+        {
+            track!(reader.seek_to(name_heap_address))?;
+            track!(LocalHeaps::from_reader(reader))
+        } else {
+            track_panic!(ErrorKind::Unsupported);
+        }
     }
 
     fn from_reader<R: Read>(mut reader: R) -> Result<Self> {

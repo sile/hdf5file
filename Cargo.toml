@@ -5,6 +5,7 @@ authors = ["Takeru Ohta <phjgt308@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+bitflags = "1"
 byteorder = "1"
 trackable = "0.2"
 

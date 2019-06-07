@@ -20,5 +20,8 @@ fn main() -> trackable::result::TopLevelResult {
 
     let h = track!(s.root_group_symbol_table_entry.object_header(&mut file))?;
     println!("Root Object Header: {:?}", h);
+
+    let h = track!(s.root_group_symbol_table_entry.local_heaps(&mut file))?;
+    println!("Local Heaps: {:?}", h);
     Ok(())
 }
