@@ -1,17 +1,17 @@
-use crate::io::ReadExt as _;
+use crate::io::{ReadExt as _, SeekExt as _};
 use crate::{ErrorKind, Result};
 use std;
-use std::io::Read;
+use std::io::{Read, Seek};
 
 const FORMAT_SIGNATURE: [u8; 8] = [137, 72, 68, 70, 13, 10, 26, 10];
 const UNDEFINED_ADDRESS: u64 = std::u64::MAX;
 
 #[derive(Debug)]
 pub struct Superblock {
-    group_leaf_node_k: u16,     // TODO: NonZeroU16
-    group_internal_node_k: u16, // TODO: NonZeroU16
-    end_of_file_address: u64,
-    root_group_symbol_table_entry: SymbolTableEntry,
+    pub group_leaf_node_k: u16,     // TODO: NonZeroU16
+    pub group_internal_node_k: u16, // TODO: NonZeroU16
+    pub end_of_file_address: u64,
+    pub root_group_symbol_table_entry: SymbolTableEntry,
 }
 impl Superblock {
     pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
@@ -83,27 +83,131 @@ impl Superblock {
     }
 }
 
+// TODO: move level2a
+/// https://support.hdfgroup.org/HDF5/doc/H5.format.html#ObjectHeader
+#[derive(Debug)]
+pub struct ObjectHeader {
+    prefix: ObjectHeaderPrefix,
+}
+impl ObjectHeader {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let prefix = track!(ObjectHeaderPrefix::from_reader(&mut reader))?;
+        Ok(Self { prefix })
+    }
+}
+
+#[derive(Debug)]
+pub struct ObjectHeaderPrefix {
+    messages: Vec<HeaderMessage>,
+    object_reference_count: u32,
+    object_header_size: u32,
+}
+impl ObjectHeaderPrefix {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let version = track!(reader.read_u8())?;
+        track_assert_eq!(version, 1, ErrorKind::InvalidFile);
+
+        let _reserved = track!(reader.read_u8())?;
+        let header_message_count = track!(reader.read_u16())?;
+        dbg!(header_message_count);
+        let messages = (0..header_message_count)
+            .map(|_| track!(HeaderMessage::from_reader(&mut reader)))
+            .collect::<Result<_>>()?;
+
+        let object_reference_count = track!(reader.read_u32())?;
+        dbg!(object_reference_count);
+
+        let object_header_size = track!(reader.read_u32())?;
+        dbg!(object_header_size);
+
+        Ok(Self {
+            messages,
+            object_reference_count,
+            object_header_size,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct HeaderMessage {
+    kind: u16,
+    flags: u8,
+    data: Vec<u8>,
+}
+impl HeaderMessage {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let kind = track!(reader.read_u16())?;
+        let data_len = track!(reader.read_u16())?;
+        let flags = track!(reader.read_u8())?;
+        track!(reader.skip(3))?;
+        let data = track!(reader.read_vec(data_len as usize))?;
+        Ok(Self { kind, flags, data })
+    }
+}
+
 // TODO: move level1
 /// https://support.hdfgroup.org/HDF5/doc/H5.format.html#SymbolTableEntry
 #[derive(Debug)]
 pub struct SymbolTableEntry {
     link_name_offset: u64,
     object_header_address: u64,
-    cache_type: u32,
-    scratch_pad_space: u128,
+    scratch_pad: ScratchPad,
 }
 impl SymbolTableEntry {
+    pub fn object_header<R: Read + Seek>(&self, mut reader: R) -> Result<ObjectHeader> {
+        track!(reader.seek_to(self.object_header_address))?;
+        track!(ObjectHeader::from_reader(reader))
+    }
+
     fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
         let link_name_offset = track!(reader.read_u64())?;
+        track_assert_eq!(link_name_offset, 0, ErrorKind::Unsupported);
+
         let object_header_address = track!(reader.read_u64())?;
         let cache_type = track!(reader.read_u32())?;
+
         let _reserved = track!(reader.read_u32())?;
-        let scratch_pad_space = track!(reader.read_u128())?;
+        let scratch_pad = track!(ScratchPad::from_reader(cache_type, &mut reader))?;
         Ok(Self {
             link_name_offset,
             object_header_address,
-            cache_type,
-            scratch_pad_space,
+            scratch_pad,
         })
+    }
+}
+
+#[derive(Debug)]
+pub enum ScratchPad {
+    None,
+    ObjectHeader {
+        btree_address: u64,
+        name_heap_address: u64,
+    },
+    SymbolicLink {
+        link_value_offset: u32,
+    },
+}
+impl ScratchPad {
+    fn from_reader<R: Read>(cache_type: u32, mut reader: R) -> Result<Self> {
+        match cache_type {
+            0 => {
+                let _ = track!(reader.read_u128())?;
+                Ok(ScratchPad::None)
+            }
+            1 => {
+                let btree_address = track!(reader.read_u64())?;
+                let name_heap_address = track!(reader.read_u64())?;
+                Ok(ScratchPad::ObjectHeader {
+                    btree_address,
+                    name_heap_address,
+                })
+            }
+            2 => {
+                let link_value_offset = track!(reader.read_u32())?;
+                track!(reader.skip(12))?;
+                Ok(ScratchPad::SymbolicLink { link_value_offset })
+            }
+            _ => track_panic!(ErrorKind::InvalidFile, "Unknown cache type: {}", cache_type),
+        }
     }
 }

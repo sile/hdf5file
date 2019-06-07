@@ -1,10 +1,31 @@
 use crate::{Error, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
+
+pub trait SeekExt: Seek {
+    fn seek_to(&mut self, offset: u64) -> Result<()> {
+        let _ = track!(self.seek(SeekFrom::Start(offset)).map_err(Error::from))?;
+        Ok(())
+    }
+}
+impl<T: Seek> SeekExt for T {}
 
 pub trait ReadExt: Read {
+    fn skip(&mut self, n: usize) -> Result<()> {
+        for _ in 0..n {
+            track!(self.read_u8())?;
+        }
+        Ok(())
+    }
+
     fn read_bytes(&mut self, buf: &mut [u8]) -> Result<()> {
         track!(self.read_exact(buf).map_err(Error::from))
+    }
+
+    fn read_vec(&mut self, n: usize) -> Result<Vec<u8>> {
+        let mut bytes = vec![0; n];
+        track!(self.read_bytes(&mut bytes))?;
+        Ok(bytes)
     }
 
     fn read_u8(&mut self) -> Result<u8> {
