@@ -31,14 +31,43 @@ fn main() -> trackable::result::TopLevelResult {
     let b = track!(s.root_group_symbol_table_entry.b_tree_node(&mut file))?;
     println!("B-Tree Node: {:?}", b);
 
-    for k in track!(b.keys(h, &mut file))? {
+    for k in b.keys(h, &mut file) {
         println!("  - Key: {:?}", track!(k)?);
     }
 
     let mut stack = vec![b];
     while let Some(node) = stack.pop() {
-        for c in track!(node.children(&mut file))? {
-            stack.push(track!(c)?);
+        for c in node.children(&mut file).collect::<Vec<_>>().into_iter() {
+            match track!(c)? {
+                hdf5file::level0::BTreeNodeChild::Intermediate(c) => {
+                    stack.push(c);
+                }
+                hdf5file::level0::BTreeNodeChild::GroupLeaf(c) => {
+                    for entry in &c.entries {
+                        println!("# {:?}", entry);
+                        println!("# {:?}", entry.object_header(&mut file)?);
+                        println!("# {:?}", track!(entry.link_name(&mut file))?);
+
+                        let node = entry.b_tree_node(&mut file)?;
+                        let heap = entry.local_heaps(&mut file)?;
+                        println!("# {:?}", node);
+                        for k in node.keys(heap, &mut file) {
+                            println!("  - Key: {:?}", track!(k)?);
+                        }
+                        for c in node.children(&mut file).collect::<Vec<_>>().into_iter() {
+                            let c = c?;
+                            println!("  # {:?}", c);
+                            if let hdf5file::level0::BTreeNodeChild::GroupLeaf(c) = c {
+                                for entry in &c.entries {
+                                    println!("  # {:?}", entry.object_header(&mut file)?);
+                                    println!("  # {:?}: {:?}", entry, entry.link_name(&mut file)?);
+                                }
+                            }
+                        }
+                        panic!();
+                    }
+                }
+            }
         }
         println!("STACK: {}", stack.len());
     }

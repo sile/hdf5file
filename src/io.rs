@@ -1,16 +1,23 @@
-use crate::{Error, Result};
+use crate::{Error, ErrorKind, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::{Read, Seek, SeekFrom};
 
 pub trait SeekExt: Seek {
     fn seek_to(&mut self, offset: u64) -> Result<()> {
-        let _ = track!(self.seek(SeekFrom::Start(offset)).map_err(Error::from))?;
+        track!(self.seek(SeekFrom::Start(offset)).map_err(Error::from))?;
         Ok(())
     }
 }
 impl<T: Seek> SeekExt for T {}
 
 pub trait ReadExt: Read {
+    fn assert_signature(&mut self, expected: &[u8]) -> Result<()> {
+        let mut signature = [0; 4];
+        track!(self.read_bytes(&mut signature))?;
+        track_assert_eq!(&signature, expected, ErrorKind::InvalidFile);
+        Ok(())
+    }
+
     fn skip(&mut self, n: usize) -> Result<()> {
         for _ in 0..n {
             track!(self.read_u8())?;

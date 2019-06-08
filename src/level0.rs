@@ -109,13 +109,20 @@ impl ObjectHeaderPrefix {
         track_assert_eq!(version, 1, ErrorKind::InvalidFile);
 
         let _reserved = track!(reader.read_u8())?;
+        track_assert_eq!(_reserved, 0, ErrorKind::InvalidFile);
+
         let header_message_count = track!(reader.read_u16())?;
         let object_reference_count = track!(reader.read_u32())?;
         let object_header_size = track!(reader.read_u32())?;
 
+        // Header messages are aligned on 8-byte boundaries for version 1 object headers.
+        track!(reader.skip(4))?;
+
+        let mut reader = reader.take(object_header_size as u64);
         let messages = (0..header_message_count)
             .map(|_| track!(HeaderMessage::from_reader(&mut reader)))
             .collect::<Result<_>>()?;
+        track_assert_eq!(reader.limit(), 0, ErrorKind::Other; object_header_size, messages);
 
         Ok(Self {
             messages,
@@ -252,29 +259,60 @@ impl BTreeNode {
     pub fn children<'a, R: 'a + Read + Seek>(
         &'a self,
         mut reader: R,
-    ) -> Result<impl 'a + Iterator<Item = Result<Self>>> {
+    ) -> impl 'a + Iterator<Item = Result<BTreeNodeChild>> {
         let BTreeNode::Group {
             node_level,
             children,
             ..
         } = self;
-        track_assert_ne!(*node_level, 0, ErrorKind::Unsupported);
-        Ok(children.iter().map(move |&addr| {
-            track!(reader.seek_to(addr))?;
-            track!(Self::from_reader(&mut reader))
-        }))
+        let iter: Box<'a + Iterator<Item = _>> = if *node_level == 0 {
+            Box::new(children.iter().map(move |&addr| {
+                track!(reader.seek_to(addr))?;
+                track!(SymbolTableNode::from_reader(&mut reader)).map(BTreeNodeChild::GroupLeaf)
+            }))
+        } else {
+            Box::new(children.iter().map(move |&addr| {
+                track!(reader.seek_to(addr))?;
+                track!(Self::from_reader(&mut reader)).map(BTreeNodeChild::Intermediate)
+            }))
+        };
+        iter
     }
 
     pub fn keys<'a, R: 'a + Read + Seek>(
         &'a self,
         heaps: LocalHeaps,
         mut reader: R,
-    ) -> Result<impl 'a + Iterator<Item = Result<String>>> {
+    ) -> impl 'a + Iterator<Item = Result<String>> {
         let BTreeNode::Group { keys, .. } = self;
-        Ok(keys
-            .iter()
-            .map(move |&addr| track!(heaps.read_string(addr, &mut reader))))
+        keys.iter()
+            .map(move |&addr| track!(heaps.read_string(addr, &mut reader)))
     }
+}
+
+/// https://support.hdfgroup.org/HDF5/doc/H5.format.html#SymbolTable
+#[derive(Debug)]
+pub struct SymbolTableNode {
+    pub entries: Vec<SymbolTableEntry>,
+}
+impl SymbolTableNode {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        track!(reader.assert_signature(b"SNOD"))?;
+        let version = track!(reader.read_u8())?;
+        track_assert_eq!(version, 1, ErrorKind::Unsupported);
+        track!(reader.skip(1))?;
+        let symbol_count = track!(reader.read_u16())?;
+        let entries = (0..symbol_count)
+            .map(|_| track!(SymbolTableEntry::from_reader(&mut reader)))
+            .collect::<Result<_>>()?;
+        Ok(Self { entries })
+    }
+}
+
+#[derive(Debug)]
+pub enum BTreeNodeChild {
+    Intermediate(BTreeNode),
+    GroupLeaf(SymbolTableNode),
 }
 
 // TODO: move level1
@@ -287,7 +325,15 @@ pub struct SymbolTableEntry {
 }
 impl SymbolTableEntry {
     pub fn link_name<R: Read + Seek>(&self, mut reader: R) -> Result<String> {
-        let mut addr = track!(self.local_heaps(&mut reader))?.data_segment_address;
+        let mut addr = if let ScratchPad::ObjectHeader {
+            name_heap_address, ..
+        } = self.scratch_pad
+        {
+            name_heap_address
+        } else {
+            track_panic!(ErrorKind::Unsupported);
+        };
+
         addr += self.link_name_offset;
         track!(reader.seek_to(addr))?;
 
@@ -322,8 +368,6 @@ impl SymbolTableEntry {
 
     fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
         let link_name_offset = track!(reader.read_u64())?;
-        track_assert_eq!(link_name_offset, 0, ErrorKind::Unsupported);
-
         let object_header_address = track!(reader.read_u64())?;
         let cache_type = track!(reader.read_u32())?;
 
