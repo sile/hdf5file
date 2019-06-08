@@ -12,6 +12,11 @@ impl From<std::io::Error> for Error {
         ErrorKind::IoError.cause(f).into()
     }
 }
+impl From<std::string::FromUtf8Error> for Error {
+    fn from(f: std::string::FromUtf8Error) -> Self {
+        ErrorKind::InvalidFile.cause(f).into()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum ErrorKind {

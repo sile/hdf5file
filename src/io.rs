@@ -18,6 +18,19 @@ pub trait ReadExt: Read {
         Ok(())
     }
 
+    fn read_null_terminated_string(&mut self) -> Result<String> {
+        let mut buf = Vec::new();
+        loop {
+            let b = track!(self.read_u8())?;
+            if b == 0 {
+                break;
+            } else {
+                buf.push(b);
+            }
+        }
+        track!(String::from_utf8(buf).map_err(Error::from))
+    }
+
     fn read_bytes(&mut self, buf: &mut [u8]) -> Result<()> {
         track!(self.read_exact(buf).map_err(Error::from))
     }

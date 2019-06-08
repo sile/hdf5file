@@ -1,6 +1,7 @@
 use crate::io::{ReadExt as _, SeekExt as _};
-use crate::{ErrorKind, Result};
+use crate::{Error, ErrorKind, Result};
 use std;
+use std::convert::TryFrom;
 use std::io::{Read, Seek};
 
 const FORMAT_SIGNATURE: [u8; 8] = [137, 72, 68, 70, 13, 10, 26, 10];
@@ -109,13 +110,8 @@ impl ObjectHeaderPrefix {
 
         let _reserved = track!(reader.read_u8())?;
         let header_message_count = track!(reader.read_u16())?;
-        dbg!(header_message_count);
-
         let object_reference_count = track!(reader.read_u32())?;
-        dbg!(object_reference_count);
-
         let object_header_size = track!(reader.read_u32())?;
-        dbg!(object_header_size);
 
         let messages = (0..header_message_count)
             .map(|_| track!(HeaderMessage::from_reader(&mut reader)))
@@ -167,6 +163,11 @@ pub struct LocalHeaps {
     data_segment_address: u64,
 }
 impl LocalHeaps {
+    pub fn read_string<R: Read + Seek>(&self, offset: u64, mut reader: R) -> Result<String> {
+        track!(reader.seek_to(self.data_segment_address + offset))?;
+        track!(reader.read_null_terminated_string())
+    }
+
     pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
         let mut signature = [0; 4];
         track!(reader.read_bytes(&mut signature))?;
@@ -187,6 +188,95 @@ impl LocalHeaps {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum NodeType {
+    Group = 0,
+    RawDataChunk = 1,
+}
+impl TryFrom<u8> for NodeType {
+    type Error = Error;
+
+    fn try_from(f: u8) -> Result<Self> {
+        match f {
+            0 => Ok(NodeType::Group),
+            1 => Ok(NodeType::RawDataChunk),
+            _ => track_panic!(ErrorKind::InvalidFile, "Unknown node type: {}", f),
+        }
+    }
+}
+
+/// https://support.hdfgroup.org/HDF5/doc/H5.format.html#Btrees
+#[derive(Debug)]
+pub enum BTreeNode {
+    Group {
+        node_level: u8,
+        keys: Vec<u64>,
+        left_sibling_address: u64,
+        right_sibling_address: u64,
+        children: Vec<u64>,
+    },
+}
+impl BTreeNode {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let mut signature = [0; 4];
+        track!(reader.read_bytes(&mut signature))?;
+        track_assert_eq!(&signature, b"TREE", ErrorKind::InvalidFile);
+
+        let node_type = track!(reader.read_u8().and_then(NodeType::try_from))?;
+        track_assert_eq!(node_type, NodeType::Group, ErrorKind::Unsupported);
+
+        let node_level = track!(reader.read_u8())?;
+        let entries_used = track!(reader.read_u16())?;
+        dbg!(entries_used);
+
+        let left_sibling_address = track!(reader.read_u64())?;
+        let right_sibling_address = track!(reader.read_u64())?;
+
+        let mut keys = Vec::with_capacity(entries_used as usize + 1);
+        let mut children = Vec::with_capacity(entries_used as usize);
+        for _ in 0..entries_used {
+            keys.push(track!(reader.read_u64())?);
+            children.push(track!(reader.read_u64())?);
+        }
+        keys.push(track!(reader.read_u64())?);
+
+        Ok(BTreeNode::Group {
+            node_level,
+            keys,
+            children,
+            left_sibling_address,
+            right_sibling_address,
+        })
+    }
+
+    pub fn children<'a, R: 'a + Read + Seek>(
+        &'a self,
+        mut reader: R,
+    ) -> Result<impl 'a + Iterator<Item = Result<Self>>> {
+        let BTreeNode::Group {
+            node_level,
+            children,
+            ..
+        } = self;
+        track_assert_ne!(*node_level, 0, ErrorKind::Unsupported);
+        Ok(children.iter().map(move |&addr| {
+            track!(reader.seek_to(addr))?;
+            track!(Self::from_reader(&mut reader))
+        }))
+    }
+
+    pub fn keys<'a, R: 'a + Read + Seek>(
+        &'a self,
+        heaps: LocalHeaps,
+        mut reader: R,
+    ) -> Result<impl 'a + Iterator<Item = Result<String>>> {
+        let BTreeNode::Group { keys, .. } = self;
+        Ok(keys
+            .iter()
+            .map(move |&addr| track!(heaps.read_string(addr, &mut reader))))
+    }
+}
+
 // TODO: move level1
 /// https://support.hdfgroup.org/HDF5/doc/H5.format.html#SymbolTableEntry
 #[derive(Debug)]
@@ -196,9 +286,26 @@ pub struct SymbolTableEntry {
     scratch_pad: ScratchPad,
 }
 impl SymbolTableEntry {
+    pub fn link_name<R: Read + Seek>(&self, mut reader: R) -> Result<String> {
+        let mut addr = track!(self.local_heaps(&mut reader))?.data_segment_address;
+        addr += self.link_name_offset;
+        track!(reader.seek_to(addr))?;
+
+        track!(reader.read_null_terminated_string())
+    }
+
     pub fn object_header<R: Read + Seek>(&self, mut reader: R) -> Result<ObjectHeader> {
         track!(reader.seek_to(self.object_header_address))?;
         track!(ObjectHeader::from_reader(reader))
+    }
+
+    pub fn b_tree_node<R: Read + Seek>(&self, mut reader: R) -> Result<BTreeNode> {
+        if let ScratchPad::ObjectHeader { btree_address, .. } = self.scratch_pad {
+            track!(reader.seek_to(btree_address))?;
+            track!(BTreeNode::from_reader(reader))
+        } else {
+            track_panic!(ErrorKind::Unsupported);
+        }
     }
 
     pub fn local_heaps<R: Read + Seek>(&self, mut reader: R) -> Result<LocalHeaps> {

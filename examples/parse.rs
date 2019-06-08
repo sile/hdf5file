@@ -17,11 +17,30 @@ fn main() -> trackable::result::TopLevelResult {
 
     let s = track!(hdf5file::level0::Superblock::from_reader(&mut file))?;
     println!("Superblock: {:?}", s);
+    println!(
+        "Root Link Name: {:?}",
+        s.root_group_symbol_table_entry.link_name(&mut file)?
+    );
 
     let h = track!(s.root_group_symbol_table_entry.object_header(&mut file))?;
     println!("Root Object Header: {:?}", h);
 
     let h = track!(s.root_group_symbol_table_entry.local_heaps(&mut file))?;
     println!("Local Heaps: {:?}", h);
+
+    let b = track!(s.root_group_symbol_table_entry.b_tree_node(&mut file))?;
+    println!("B-Tree Node: {:?}", b);
+
+    for k in track!(b.keys(h, &mut file))? {
+        println!("  - Key: {:?}", track!(k)?);
+    }
+
+    let mut stack = vec![b];
+    while let Some(node) = stack.pop() {
+        for c in track!(node.children(&mut file))? {
+            stack.push(track!(c)?);
+        }
+        println!("STACK: {}", stack.len());
+    }
     Ok(())
 }
