@@ -18,6 +18,12 @@ pub trait ReadExt: Read {
         Ok(())
     }
 
+    fn read_all(&mut self) -> Result<Vec<u8>> {
+        let mut buf = Vec::new();
+        track!(self.read_to_end(&mut buf).map_err(Error::from))?;
+        Ok(buf)
+    }
+
     fn skip(&mut self, n: usize) -> Result<()> {
         for _ in 0..n {
             track!(self.read_u8())?;

@@ -147,9 +147,8 @@ bitflags! {
 
 #[derive(Debug)]
 pub struct HeaderMessage {
-    kind: u16,
     flags: HeaderMessageFlags,
-    data: Vec<u8>,
+    message: Message,
 }
 impl HeaderMessage {
     pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
@@ -157,9 +156,64 @@ impl HeaderMessage {
         let data_len = track!(reader.read_u16())?;
         let flags = HeaderMessageFlags::from_bits_truncate(track!(reader.read_u8())?);
         track!(reader.skip(3))?;
-        let data = track!(reader.read_vec(data_len as usize))?;
-        Ok(Self { kind, flags, data })
+        let reader = reader.take(u64::from(data_len));
+        let message = match kind {
+            0x00 => track!(NilMessage::from_reader(reader)).map(Message::Nil)?,
+            0x11 => track!(SymbolTableMessage::from_reader(reader)).map(Message::SymbolTable)?,
+            _ => track_panic!(ErrorKind::Unsupported, "Message type: {}", kind),
+        };
+        Ok(Self { flags, message })
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct NilMessage {}
+impl NilMessage {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let _ = track!(reader.read_all())?;
+        Ok(Self {})
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SymbolTableMessage {
+    pub b_tree_address: u64,
+    pub local_heap_address: u64,
+}
+impl SymbolTableMessage {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        Ok(Self {
+            b_tree_address: track!(reader.read_u64())?,
+            local_heap_address: track!(reader.read_u64())?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    Nil(NilMessage),
+    Dataspace,
+    LinkInfo,
+    Datatype,
+    FillValueOld,
+    FillValue,
+    Link,
+    ExternalDataFile,
+    DataLayout,
+    Bogus,
+    GroupInfo,
+    FilePipeline,
+    Attribute,
+    ObjectComment,
+    ObjectModificationTimeOld,
+    SharedMessageTable,
+    ObjectHeaderContinuation,
+    SymbolTable(SymbolTableMessage),
+    ObjectModificationTime,
+    BTreeKValues,
+    DriverInfo,
+    AttributeInfo,
+    ObjectReferenceCount,
 }
 
 /// https://support.hdfgroup.org/HDF5/doc/H5.format.html#LocalHeap
@@ -324,20 +378,20 @@ pub struct SymbolTableEntry {
     scratch_pad: ScratchPad,
 }
 impl SymbolTableEntry {
-    pub fn link_name<R: Read + Seek>(&self, mut reader: R) -> Result<String> {
+    pub fn link_name<R: Read + Seek>(&self, mut reader: R) -> Result<Option<String>> {
         let mut addr = if let ScratchPad::ObjectHeader {
             name_heap_address, ..
         } = self.scratch_pad
         {
             name_heap_address
         } else {
-            track_panic!(ErrorKind::Unsupported);
+            return Ok(None);
         };
 
         addr += self.link_name_offset;
         track!(reader.seek_to(addr))?;
 
-        track!(reader.read_null_terminated_string())
+        track!(reader.read_null_terminated_string()).map(Some)
     }
 
     pub fn object_header<R: Read + Seek>(&self, mut reader: R) -> Result<ObjectHeader> {
@@ -345,24 +399,26 @@ impl SymbolTableEntry {
         track!(ObjectHeader::from_reader(reader))
     }
 
-    pub fn b_tree_node<R: Read + Seek>(&self, mut reader: R) -> Result<BTreeNode> {
+    pub fn b_tree_node<R: Read + Seek>(&self, mut reader: R) -> Result<Option<BTreeNode>> {
         if let ScratchPad::ObjectHeader { btree_address, .. } = self.scratch_pad {
             track!(reader.seek_to(btree_address))?;
-            track!(BTreeNode::from_reader(reader))
+            track!(BTreeNode::from_reader(reader)).map(Some)
         } else {
-            track_panic!(ErrorKind::Unsupported);
+            // TODO: find header messages
+            Ok(None)
         }
     }
 
-    pub fn local_heaps<R: Read + Seek>(&self, mut reader: R) -> Result<LocalHeaps> {
+    pub fn local_heaps<R: Read + Seek>(&self, mut reader: R) -> Result<Option<LocalHeaps>> {
         if let ScratchPad::ObjectHeader {
             name_heap_address, ..
         } = self.scratch_pad
         {
             track!(reader.seek_to(name_heap_address))?;
-            track!(LocalHeaps::from_reader(reader))
+            track!(LocalHeaps::from_reader(reader)).map(Some)
         } else {
-            track_panic!(ErrorKind::Unsupported);
+            // TODO: find header messages
+            Ok(None)
         }
     }
 
