@@ -20,6 +20,7 @@ impl From<std::string::FromUtf8Error> for Error {
 
 #[derive(Debug, Clone)]
 pub enum ErrorKind {
+    InvalidInput,
     InvalidFile,
     Unsupported,
     IoError,

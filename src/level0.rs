@@ -8,7 +8,7 @@ const FORMAT_SIGNATURE: [u8; 8] = [137, 72, 68, 70, 13, 10, 26, 10];
 const UNDEFINED_ADDRESS: u64 = std::u64::MAX;
 // const UNLIMITED_SIZE: u64 = std::u64::MAX;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Superblock {
     pub group_leaf_node_k: u16,     // TODO: NonZeroU16
     pub group_internal_node_k: u16, // TODO: NonZeroU16
@@ -87,7 +87,7 @@ impl Superblock {
 
 // TODO: move level2a
 /// https://support.hdfgroup.org/HDF5/doc/H5.format.html#ObjectHeader
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ObjectHeader {
     prefix: ObjectHeaderPrefix,
 }
@@ -98,7 +98,7 @@ impl ObjectHeader {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ObjectHeaderPrefix {
     messages: Vec<HeaderMessage>,
     object_reference_count: u32,
@@ -146,7 +146,7 @@ bitflags! {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HeaderMessage {
     flags: HeaderMessageFlags,
     message: Message,
@@ -539,7 +539,7 @@ impl TryFrom<u8> for NodeType {
 }
 
 /// https://support.hdfgroup.org/HDF5/doc/H5.format.html#Btrees
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BTreeNode {
     Group {
         node_level: u8,
@@ -617,7 +617,7 @@ impl BTreeNode {
 }
 
 /// https://support.hdfgroup.org/HDF5/doc/H5.format.html#SymbolTable
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SymbolTableNode {
     pub entries: Vec<SymbolTableEntry>,
 }
@@ -635,7 +635,7 @@ impl SymbolTableNode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BTreeNodeChild {
     Intermediate(BTreeNode),
     GroupLeaf(SymbolTableNode),
@@ -643,7 +643,7 @@ pub enum BTreeNodeChild {
 
 // TODO: move level1
 /// https://support.hdfgroup.org/HDF5/doc/H5.format.html#SymbolTableEntry
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SymbolTableEntry {
     link_name_offset: u64,
     object_header_address: u64,
@@ -715,7 +715,7 @@ impl SymbolTableEntry {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ScratchPad {
     None,
     ObjectHeader {
