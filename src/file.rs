@@ -1,7 +1,7 @@
 use crate::level0::Superblock;
 use crate::level1::{BTreeNode, LocalHeap, SymbolTableEntry};
 use crate::{ErrorKind, Object, Result};
-use std::io::{Read, Seek};
+use std::io::{BufReader, Read, Seek};
 use std::path::{Component, Path};
 
 #[derive(Debug)]
@@ -20,7 +20,7 @@ where
 
     pub fn get_object<P: AsRef<Path>>(&mut self, path: P) -> Result<Option<Object>> {
         let mut node = track!(Node::new(
-            &mut self.io,
+            BufReader::new(&mut self.io),
             &self.superblock.root_group_symbol_table_entry,
         ))?;
 
@@ -44,16 +44,16 @@ where
 }
 
 #[derive(Debug)]
-pub struct Node<'a, T> {
-    io: &'a mut T,
+pub struct Node<T> {
+    io: T,
     b_tree_node: BTreeNode,
     local_heap: LocalHeap,
 }
-impl<'a, T> Node<'a, T>
+impl<T> Node<T>
 where
     T: Read + Seek,
 {
-    pub fn new(mut io: &'a mut T, symbol_table: &SymbolTableEntry) -> Result<Self> {
+    pub fn new(mut io: T, symbol_table: &SymbolTableEntry) -> Result<Self> {
         let b_tree_node = track!(symbol_table.b_tree_node(&mut io))?;
         let b_tree_node = track_assert_some!(b_tree_node, ErrorKind::InvalidInput);
 

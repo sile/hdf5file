@@ -560,7 +560,6 @@ impl BTreeNode {
 
         let node_level = track!(reader.read_u8())?;
         let entries_used = track!(reader.read_u16())?;
-        dbg!(entries_used);
 
         let left_sibling_address = track!(reader.read_u64())?;
         let right_sibling_address = track!(reader.read_u64())?;
