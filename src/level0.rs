@@ -6,6 +6,7 @@ use std::io::{Read, Seek};
 
 const FORMAT_SIGNATURE: [u8; 8] = [137, 72, 68, 70, 13, 10, 26, 10];
 const UNDEFINED_ADDRESS: u64 = std::u64::MAX;
+// const UNLIMITED_SIZE: u64 = std::u64::MAX;
 
 #[derive(Debug)]
 pub struct Superblock {
@@ -156,16 +157,27 @@ impl HeaderMessage {
         let data_len = track!(reader.read_u16())?;
         let flags = HeaderMessageFlags::from_bits_truncate(track!(reader.read_u8())?);
         track!(reader.skip(3))?;
-        let reader = reader.take(u64::from(data_len));
+        let mut reader = reader.take(u64::from(data_len));
         let message = match kind {
-            0x00 => track!(NilMessage::from_reader(reader)).map(Message::Nil)?,
-            0x11 => track!(SymbolTableMessage::from_reader(reader)).map(Message::SymbolTable)?,
+            0x00 => track!(NilMessage::from_reader(&mut reader)).map(Message::Nil)?,
+            0x01 => track!(DataspaceMessage::from_reader(&mut reader)).map(Message::Dataspace)?,
+            0x03 => track!(DatatypeMessage::from_reader(&mut reader)).map(Message::Datatype)?,
+            0x05 => track!(FillValueMessage::from_reader(&mut reader)).map(Message::FillValue)?,
+            0x08 => track!(DataLayoutMessage::from_reader(&mut reader)).map(Message::DataLayout)?,
+            0x11 => {
+                track!(SymbolTableMessage::from_reader(&mut reader)).map(Message::SymbolTable)?
+            }
+            0x12 => track!(ObjectModificationTimeMessage::from_reader(&mut reader))
+                .map(Message::ObjectModificationTime)?,
             _ => track_panic!(ErrorKind::Unsupported, "Message type: {}", kind),
         };
+        track_assert_eq!(reader.limit(), 0, ErrorKind::Other);
+
         Ok(Self { flags, message })
     }
 }
 
+/// type=0x00
 #[derive(Debug, Clone)]
 pub struct NilMessage {}
 impl NilMessage {
@@ -175,6 +187,224 @@ impl NilMessage {
     }
 }
 
+/// type=0x01
+#[derive(Debug, Clone)]
+pub struct DataspaceMessage {
+    dimension_sizes: Vec<u64>,
+    dimension_max_sizes: Option<Vec<u64>>,
+}
+impl DataspaceMessage {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let version = track!(reader.read_u8())?;
+        track_assert_eq!(version, 1, ErrorKind::Unsupported);
+
+        let dimensionality = track!(reader.read_u8())?;
+        let flags = track!(reader.read_u8())?; // TODO: consider flags
+        track!(reader.skip(5))?;
+
+        let dimension_sizes = (0..dimensionality)
+            .map(|_| track!(reader.read_u64()))
+            .collect::<Result<Vec<_>>>()?;
+
+        let dimension_max_sizes = if (flags & 0b0000_0001) != 0 {
+            Some(
+                (0..dimensionality)
+                    .map(|_| track!(reader.read_u64()))
+                    .collect::<Result<Vec<_>>>()?,
+            )
+        } else {
+            None
+        };
+
+        if (flags & 0b0000_0010) != 0 {
+            track_panic!(ErrorKind::Unsupported);
+        }
+
+        Ok(Self {
+            dimension_sizes,
+            dimension_max_sizes,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum DatatypeClass {
+    FixedPoint,
+    FloatingPoint,
+    Time,
+    String,
+    BitField,
+    Opaque,
+    Compound,
+    Reference,
+    Enumerated,
+    VariableLength,
+    Array,
+}
+impl TryFrom<u8> for DatatypeClass {
+    type Error = Error;
+
+    fn try_from(f: u8) -> Result<Self> {
+        Ok(match f {
+            0 => DatatypeClass::FixedPoint,
+            1 => DatatypeClass::FloatingPoint,
+            2 => DatatypeClass::Time,
+            3 => DatatypeClass::String,
+            4 => DatatypeClass::BitField,
+            5 => DatatypeClass::Opaque,
+            6 => DatatypeClass::Compound,
+            7 => DatatypeClass::Reference,
+            8 => DatatypeClass::Enumerated,
+            9 => DatatypeClass::VariableLength,
+            10 => DatatypeClass::Array,
+            _ => track_panic!(ErrorKind::InvalidFile, "Unknown datatype class: {}", f),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FloatingPointDatatype {
+    bit_field: u32,
+    size: u32,
+
+    bit_offset: u16,
+    bit_precision: u16,
+    exponent_location: u8,
+    exponent_size: u8,
+    mantissa_location: u8,
+    mantissa_size: u8,
+    exponent_bias: u32,
+}
+impl FloatingPointDatatype {
+    pub fn from_reader<R: Read>(bit_field: u32, size: u32, mut reader: R) -> Result<Self> {
+        let bit_offset = track!(reader.read_u16())?;
+        let bit_precision = track!(reader.read_u16())?;
+        let exponent_location = track!(reader.read_u8())?;
+        let exponent_size = track!(reader.read_u8())?;
+        let mantissa_location = track!(reader.read_u8())?;
+        let mantissa_size = track!(reader.read_u8())?;
+        let exponent_bias = track!(reader.read_u32())?;
+        track!(reader.skip(4))?;
+
+        Ok(Self {
+            bit_field,
+            size,
+
+            bit_offset,
+            bit_precision,
+            exponent_location,
+            exponent_size,
+            mantissa_location,
+            mantissa_size,
+            exponent_bias,
+        })
+    }
+}
+
+/// type=0x03
+#[derive(Debug, Clone)]
+pub enum DatatypeMessage {
+    FixedPoint,
+    FloatingPoint(FloatingPointDatatype),
+    Time,
+    String,
+    BitField,
+    Opaque,
+    Compound,
+    Reference,
+    Enumerated,
+    VariableLength,
+    Array,
+}
+impl DatatypeMessage {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let class_and_version = track!(reader.read_u8())?;
+        let version = class_and_version >> 4;
+        let class = track!(DatatypeClass::try_from(class_and_version & 0b0000_1111))?;
+        track_assert_eq!(version, 1, ErrorKind::Unsupported);
+
+        let bit_field = track!(reader.read_u24())?;
+        let size = track!(reader.read_u32())?;
+
+        match class {
+            DatatypeClass::FloatingPoint => {
+                track!(FloatingPointDatatype::from_reader(bit_field, size, reader))
+                    .map(DatatypeMessage::FloatingPoint)
+            }
+            _ => track_panic!(ErrorKind::Unsupported; class),
+        }
+    }
+}
+
+/// type=0x05
+#[derive(Debug, Clone)]
+pub struct FillValueMessage {
+    space_allocation_time: u8,
+    fill_value_write_time: u8,
+    fill_value: Option<Vec<u8>>,
+}
+impl FillValueMessage {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let version = track!(reader.read_u8())?;
+        track_assert_eq!(version, 2, ErrorKind::Unsupported);
+
+        let space_allocation_time = track!(reader.read_u8())?;
+        let fill_value_write_time = track!(reader.read_u8())?;
+        let fill_value_defined = track!(reader.read_u8())?;
+        let fill_value = if fill_value_defined == 1 {
+            let size = track!(reader.read_u32())?;
+            let fill_value = track!(reader.read_vec(size as usize))?;
+            Some(fill_value)
+        } else {
+            None
+        };
+        Ok(Self {
+            space_allocation_time,
+            fill_value_write_time,
+            fill_value,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Layout {
+    Contiguous { address: u64, size: u64 },
+}
+impl Layout {
+    pub fn from_reader<R: Read>(class: u8, mut reader: R) -> Result<Self> {
+        match class {
+            0 => track_panic!(ErrorKind::Unsupported),
+            1 => {
+                let address = track!(reader.read_u64())?;
+                let size = track!(reader.read_u64())?;
+                Ok(Layout::Contiguous { address, size })
+            }
+            2 => track_panic!(ErrorKind::Unsupported),
+            _ => track_panic!(ErrorKind::InvalidFile, "Unknown layout class: {}", class),
+        }
+    }
+}
+
+/// type=0x08
+#[derive(Debug, Clone)]
+pub struct DataLayoutMessage {
+    layout: Layout,
+}
+impl DataLayoutMessage {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let version = track!(reader.read_u8())?;
+        track_assert_eq!(version, 3, ErrorKind::Unsupported);
+
+        let layout_class = track!(reader.read_u8())?;
+        track!(reader.skip(2))?;
+
+        let layout = track!(Layout::from_reader(layout_class, &mut reader))?;
+        let _padding = track!(reader.read_all())?;
+        Ok(Self { layout })
+    }
+}
+
+/// type=0x11
 #[derive(Debug, Clone)]
 pub struct SymbolTableMessage {
     pub b_tree_address: u64,
@@ -189,17 +419,33 @@ impl SymbolTableMessage {
     }
 }
 
+/// type=0x12
+#[derive(Debug, Clone)]
+pub struct ObjectModificationTimeMessage {
+    unixtime_seconds: u32,
+}
+impl ObjectModificationTimeMessage {
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let version = track!(reader.read_u8())?;
+        track_assert_eq!(version, 1, ErrorKind::Unsupported);
+        track!(reader.skip(3))?;
+
+        let unixtime_seconds = track!(reader.read_u32())?;
+        Ok(Self { unixtime_seconds })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Nil(NilMessage),
-    Dataspace,
+    Dataspace(DataspaceMessage),
     LinkInfo,
-    Datatype,
+    Datatype(DatatypeMessage),
     FillValueOld,
-    FillValue,
+    FillValue(FillValueMessage),
     Link,
     ExternalDataFile,
-    DataLayout,
+    DataLayout(DataLayoutMessage),
     Bogus,
     GroupInfo,
     FilePipeline,
@@ -209,7 +455,7 @@ pub enum Message {
     SharedMessageTable,
     ObjectHeaderContinuation,
     SymbolTable(SymbolTableMessage),
-    ObjectModificationTime,
+    ObjectModificationTime(ObjectModificationTimeMessage),
     BTreeKValues,
     DriverInfo,
     AttributeInfo,

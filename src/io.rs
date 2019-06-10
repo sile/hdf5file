@@ -62,6 +62,10 @@ pub trait ReadExt: Read {
         track!(ReadBytesExt::read_u16::<LittleEndian>(self).map_err(Error::from))
     }
 
+    fn read_u24(&mut self) -> Result<u32> {
+        track!(ReadBytesExt::read_u24::<LittleEndian>(self).map_err(Error::from))
+    }
+
     fn read_u32(&mut self) -> Result<u32> {
         track!(ReadBytesExt::read_u32::<LittleEndian>(self).map_err(Error::from))
     }
