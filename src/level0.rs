@@ -301,10 +301,34 @@ impl FloatingPointDatatype {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct FixedPointDatatype {
+    bit_field: u32,
+    size: u32,
+
+    bit_offset: u16,
+    bit_precision: u16,
+}
+impl FixedPointDatatype {
+    pub fn from_reader<R: Read>(bit_field: u32, size: u32, mut reader: R) -> Result<Self> {
+        let bit_offset = track!(reader.read_u16())?;
+        let bit_precision = track!(reader.read_u16())?;
+        track!(reader.skip(4))?;
+
+        Ok(Self {
+            bit_field,
+            size,
+
+            bit_offset,
+            bit_precision,
+        })
+    }
+}
+
 /// type=0x03
 #[derive(Debug, Clone)]
 pub enum DatatypeMessage {
-    FixedPoint,
+    FixedPoint(FixedPointDatatype),
     FloatingPoint(FloatingPointDatatype),
     Time,
     String,
@@ -327,6 +351,10 @@ impl DatatypeMessage {
         let size = track!(reader.read_u32())?;
 
         match class {
+            DatatypeClass::FixedPoint => {
+                track!(FixedPointDatatype::from_reader(bit_field, size, reader))
+                    .map(DatatypeMessage::FixedPoint)
+            }
             DatatypeClass::FloatingPoint => {
                 track!(FloatingPointDatatype::from_reader(bit_field, size, reader))
                     .map(DatatypeMessage::FloatingPoint)
@@ -396,8 +424,6 @@ impl DataLayoutMessage {
         track_assert_eq!(version, 3, ErrorKind::Unsupported);
 
         let layout_class = track!(reader.read_u8())?;
-        track!(reader.skip(2))?;
-
         let layout = track!(Layout::from_reader(layout_class, &mut reader))?;
         let _padding = track!(reader.read_all())?;
         Ok(Self { layout })
@@ -463,7 +489,7 @@ pub enum Message {
 }
 
 /// https://support.hdfgroup.org/HDF5/doc/H5.format.html#LocalHeap
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LocalHeaps {
     data_segment_size: u64,
     free_list_head_offset: u64,
@@ -624,8 +650,14 @@ pub struct SymbolTableEntry {
     scratch_pad: ScratchPad,
 }
 impl SymbolTableEntry {
-    pub fn link_name<R: Read + Seek>(&self, mut reader: R) -> Result<Option<String>> {
-        let mut addr = if let ScratchPad::ObjectHeader {
+    pub fn link_name<R: Read + Seek>(
+        &self,
+        mut reader: R,
+        heap: Option<&LocalHeaps>,
+    ) -> Result<Option<String>> {
+        let mut addr = if let Some(heap) = heap {
+            heap.data_segment_address
+        } else if let ScratchPad::ObjectHeader {
             name_heap_address, ..
         } = self.scratch_pad
         {

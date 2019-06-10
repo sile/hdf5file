@@ -5,10 +5,12 @@ extern crate bitflags;
 extern crate trackable;
 
 pub use self::error::{Error, ErrorKind};
+pub use self::file::Hdf5File;
 
 pub mod level0;
 
 mod error;
+mod file;
 mod io;
 
 pub type Result<T> = std::result::Result<T, Error>;
