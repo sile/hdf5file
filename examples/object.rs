@@ -18,6 +18,7 @@ struct Opt {
 #[structopt(rename_all = "kebab-case")]
 enum Op {
     Get { object_path: PathBuf },
+    Ls,
 }
 
 fn main() -> trackable::result::TopLevelResult {
@@ -29,6 +30,14 @@ fn main() -> trackable::result::TopLevelResult {
         Op::Get { object_path } => {
             let object = track!(file.get_object(object_path))?;
             println!("{:?}", object);
+        }
+        Op::Ls => {
+            for object_path in track!(file.objects())? {
+                println!(
+                    "{}",
+                    track_assert_some!(track!(object_path)?.to_str(), trackable::error::Failed)
+                );
+            }
         }
     }
     Ok(())

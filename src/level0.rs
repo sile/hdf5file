@@ -1,5 +1,6 @@
 use crate::io::{ReadExt as _, SeekExt as _};
 use crate::{Error, ErrorKind, Result};
+use itertools::Either;
 use std;
 use std::convert::TryFrom;
 use std::io::{Read, Seek};
@@ -590,18 +591,17 @@ impl BTreeNode {
             children,
             ..
         } = self;
-        let iter: Box<'a + Iterator<Item = _>> = if *node_level == 0 {
-            Box::new(children.iter().map(move |&addr| {
+        if *node_level == 0 {
+            Either::Left(children.iter().map(move |&addr| {
                 track!(reader.seek_to(addr))?;
                 track!(SymbolTableNode::from_reader(&mut reader)).map(BTreeNodeChild::GroupLeaf)
             }))
         } else {
-            Box::new(children.iter().map(move |&addr| {
+            Either::Right(children.iter().map(move |&addr| {
                 track!(reader.seek_to(addr))?;
                 track!(Self::from_reader(&mut reader)).map(BTreeNodeChild::Intermediate)
             }))
-        };
-        iter
+        }
     }
 
     pub fn keys<'a, R: 'a + Read + Seek>(
