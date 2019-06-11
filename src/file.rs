@@ -35,7 +35,16 @@ where
         for component in components {
             if let Component::Normal(name) = component {
                 let name = track_assert_some!(name.to_str(), ErrorKind::InvalidInput);
-                track!(node.get_child(name))?;
+                loop {
+                    if let Some((do_break, child)) = track!(node.get_child(&mut io, name))? {
+                        node = child;
+                        if do_break {
+                            break;
+                        }
+                    } else {
+                        return Ok(None);
+                    }
+                }
             } else {
                 track_panic!(ErrorKind::InvalidInput);
             }
@@ -96,8 +105,47 @@ impl Node {
         }))
     }
 
-    pub fn get_child(&mut self, name: &str) -> Result<Option<()>> {
-        panic!()
+    pub fn get_child<T>(&mut self, mut io: T, name: &str) -> Result<Option<(bool, Self)>>
+    where
+        T: Read + Seek,
+    {
+        let mut found = false;
+        let mut index = 0;
+        for key in self
+            .b_tree_node
+            .keys(self.local_heap.clone(), &mut io)
+            .skip(1)
+        {
+            let key = track!(key)?;
+
+            if name <= key.as_str() {
+                found = true;
+                break;
+            }
+            index += 1;
+        }
+        if !found {
+            return Ok(None);
+        }
+
+        let child = track_assert_some!(self.children(&mut io).nth(index), ErrorKind::Other);
+        match track!(child)? {
+            BTreeNodeChild::Intermediate(child) => {
+                let child = Self {
+                    dir: self.dir.clone(),
+                    b_tree_node: child,
+                    local_heap: self.local_heap.clone(),
+                };
+                Ok(Some((false, child)))
+            }
+            BTreeNodeChild::GroupLeaf(child) => {
+                // let mut child = track!(Node::new(&mut io, &child))?;
+                // child.dir = self.dir.clone();
+                // child.dir.push(name);
+                // Ok(Some((true, child)))
+                unimplemented!("{:?}", child);
+            }
+        }
     }
 
     pub fn children<'a, T>(&'a self, io: T) -> impl 'a + Iterator<Item = Result<BTreeNodeChild>>
