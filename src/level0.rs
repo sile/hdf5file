@@ -1,5 +1,5 @@
 use crate::io::{ReadExt as _, SeekExt as _};
-use crate::level2::DataObject;
+use crate::level2::{DataItem, DataObject};
 use crate::{Error, ErrorKind, Result};
 use itertools::Either;
 use std;
@@ -103,8 +103,17 @@ impl ObjectHeader {
         let bytes = track!(self.get_data_bytes(&mut reader))?;
         let dimensions = track!(self.dimensions())?;
         let datatype = track!(self.datatype())?;
-        dbg!(dimensions);
-        dbg!(datatype);
+        dbg!(&dimensions);
+        dbg!(&datatype);
+
+        let count = dimensions.iter().cloned().sum::<u64>();
+        let mut reader = &bytes[..];
+        let items = (0..count)
+            .map(|i| track!(datatype.decode(&mut reader); i))
+            .collect::<Result<Vec<_>>>()?;
+        track_assert_eq!(reader, b"", ErrorKind::InvalidFile);
+        dbg!(items);
+
         unimplemented!("{:?}", bytes);
     }
 
@@ -302,6 +311,26 @@ impl TryFrom<u8> for DatatypeClass {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Endian {
+    Little,
+    Big,
+    Vax,
+}
+impl TryFrom<u8> for Endian {
+    type Error = Error;
+
+    fn try_from(f: u8) -> Result<Self> {
+        match f {
+            0b00 => Ok(Endian::Little),
+            0b01 => Ok(Endian::Big),
+            0b10 => track_panic!(ErrorKind::InvalidFile, "Reserved endian bits"),
+            0b11 => Ok(Endian::Vax),
+            _ => track_panic!(ErrorKind::InvalidInput),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FloatingPointDatatype {
     bit_field: u32,
@@ -316,6 +345,10 @@ pub struct FloatingPointDatatype {
     exponent_bias: u32,
 }
 impl FloatingPointDatatype {
+    pub fn decode<R: Read>(&self, mut reader: R) -> Result<f64> {
+        panic!()
+    }
+
     pub fn from_reader<R: Read>(bit_field: u32, size: u32, mut reader: R) -> Result<Self> {
         let bit_offset = track!(reader.read_u16())?;
         let bit_precision = track!(reader.read_u16())?;
@@ -381,6 +414,13 @@ pub enum DatatypeMessage {
     Array,
 }
 impl DatatypeMessage {
+    pub fn decode<R: Read>(&self, mut reader: R) -> Result<DataItem> {
+        match self {
+            DatatypeMessage::FloatingPoint(t) => track!(t.decode(reader)).map(DataItem::Float),
+            _ => track_panic!(ErrorKind::Unsupported),
+        }
+    }
+
     pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
         let class_and_version = track!(reader.read_u8())?;
         let version = class_and_version >> 4;
