@@ -312,6 +312,26 @@ impl TryFrom<u8> for DatatypeClass {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MantissaNorm {
+    None,
+    AlwaysSet,
+    ImpliedToBeSet,
+}
+impl TryFrom<u8> for MantissaNorm {
+    type Error = Error;
+
+    fn try_from(f: u8) -> Result<Self> {
+        match f {
+            0 => Ok(MantissaNorm::None),
+            1 => Ok(MantissaNorm::AlwaysSet),
+            2 => Ok(MantissaNorm::ImpliedToBeSet),
+            3 => track_panic!(ErrorKind::InvalidFile, "Reserved value"),
+            _ => track_panic!(ErrorKind::InvalidInput),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Endian {
     Little,
     Big,
@@ -322,10 +342,10 @@ impl TryFrom<u8> for Endian {
 
     fn try_from(f: u8) -> Result<Self> {
         match f {
-            0b00 => Ok(Endian::Little),
-            0b01 => Ok(Endian::Big),
-            0b10 => track_panic!(ErrorKind::InvalidFile, "Reserved endian bits"),
-            0b11 => Ok(Endian::Vax),
+            0b0000_0000 => Ok(Endian::Little),
+            0b0000_0001 => Ok(Endian::Big),
+            0b0100_0000 => track_panic!(ErrorKind::InvalidFile, "Reserved endian bits"),
+            0b0100_0001 => Ok(Endian::Vax),
             _ => track_panic!(ErrorKind::InvalidInput),
         }
     }
@@ -333,8 +353,14 @@ impl TryFrom<u8> for Endian {
 
 #[derive(Debug, Clone)]
 pub struct FloatingPointDatatype {
-    bit_field: u32,
     size: u32,
+
+    endian: Endian,
+    low_padding_bit: u8,
+    high_padding_bit: u8,
+    internal_padding_bit: u8,
+    mantissa_norm: MantissaNorm,
+    sign_location: u8,
 
     bit_offset: u16,
     bit_precision: u16,
@@ -346,7 +372,26 @@ pub struct FloatingPointDatatype {
 }
 impl FloatingPointDatatype {
     pub fn decode<R: Read>(&self, mut reader: R) -> Result<f64> {
-        panic!()
+        track_assert_eq!(self.endian, Endian::Little, ErrorKind::Unsupported);
+        track_assert_eq!(self.low_padding_bit, 0, ErrorKind::Unsupported);
+        track_assert_eq!(self.high_padding_bit, 0, ErrorKind::Unsupported);
+        track_assert_eq!(self.internal_padding_bit, 0, ErrorKind::Unsupported);
+        track_assert_eq!(
+            self.mantissa_norm,
+            MantissaNorm::ImpliedToBeSet,
+            ErrorKind::Unsupported
+        );
+        track_assert_eq!(self.sign_location, 31, ErrorKind::Unsupported);
+
+        track_assert_eq!(self.bit_offset, 0, ErrorKind::Unsupported);
+        track_assert_eq!(self.bit_precision, 32, ErrorKind::Unsupported);
+        track_assert_eq!(self.exponent_location, 23, ErrorKind::Unsupported);
+        track_assert_eq!(self.exponent_size, 8, ErrorKind::Unsupported);
+        track_assert_eq!(self.mantissa_location, 0, ErrorKind::Unsupported);
+        track_assert_eq!(self.mantissa_size, 23, ErrorKind::Unsupported);
+        track_assert_eq!(self.exponent_bias, 127, ErrorKind::Unsupported);
+
+        track!(reader.read_f32()).map(f64::from)
     }
 
     pub fn from_reader<R: Read>(bit_field: u32, size: u32, mut reader: R) -> Result<Self> {
@@ -360,8 +405,14 @@ impl FloatingPointDatatype {
         track!(reader.skip(4))?;
 
         Ok(Self {
-            bit_field,
             size,
+
+            endian: track!(Endian::try_from((bit_field & 0b0100_0001) as u8))?,
+            low_padding_bit: ((bit_field >> 1) & 1) as u8,
+            high_padding_bit: ((bit_field >> 2) & 1) as u8,
+            internal_padding_bit: ((bit_field >> 3) & 1) as u8,
+            mantissa_norm: track!(MantissaNorm::try_from(((bit_field >> 4) & 0b11) as u8))?,
+            sign_location: (bit_field >> 8) as u8,
 
             bit_offset,
             bit_precision,
@@ -831,5 +882,36 @@ impl ScratchPad {
             }
             _ => track_panic!(ErrorKind::InvalidFile, "Unknown cache type: {}", cache_type),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use trackable::result::TopLevelResult;
+
+    #[test]
+    fn floating_point_decode_works() -> TopLevelResult {
+        let datatype = FloatingPointDatatype {
+            size: 4,
+            endian: Endian::Little,
+            low_padding_bit: 0,
+            high_padding_bit: 0,
+            internal_padding_bit: 0,
+            mantissa_norm: MantissaNorm::ImpliedToBeSet,
+            sign_location: 31,
+            bit_offset: 0,
+            bit_precision: 32,
+            exponent_location: 23,
+            exponent_size: 8,
+            mantissa_location: 0,
+            mantissa_size: 23,
+            exponent_bias: 127,
+        };
+        let bytes = [166, 73, 90, 67];
+
+        let item = track!(datatype.decode(&bytes[..]))?;
+        assert_eq!(item, 218.28768920898438);
+        Ok(())
     }
 }

@@ -6,7 +6,7 @@ pub enum DataObject {
 }
 
 // TODO: rename
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DataItem {
     Float(f64),
 }

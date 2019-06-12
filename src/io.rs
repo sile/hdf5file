@@ -77,5 +77,9 @@ pub trait ReadExt: Read {
     fn read_u128(&mut self) -> Result<u128> {
         track!(ReadBytesExt::read_u128::<LittleEndian>(self).map_err(Error::from))
     }
+
+    fn read_f32(&mut self) -> Result<f32> {
+        track!(ReadBytesExt::read_f32::<LittleEndian>(self).map_err(Error::from))
+    }
 }
 impl<T: Read> ReadExt for T {}
