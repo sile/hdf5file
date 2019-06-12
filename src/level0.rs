@@ -1,4 +1,5 @@
 use crate::io::{ReadExt as _, SeekExt as _};
+use crate::level2::DataObject;
 use crate::{Error, ErrorKind, Result};
 use itertools::Either;
 use std;
@@ -96,6 +97,44 @@ impl ObjectHeader {
     pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
         let prefix = track!(ObjectHeaderPrefix::from_reader(&mut reader))?;
         Ok(Self { prefix })
+    }
+
+    pub fn get_data_object<R: Read + Seek>(&self, mut reader: R) -> Result<DataObject> {
+        let bytes = track!(self.get_data_bytes(&mut reader))?;
+        let dimensions = track!(self.dimensions())?;
+        let datatype = track!(self.datatype())?;
+        dbg!(dimensions);
+        dbg!(datatype);
+        unimplemented!("{:?}", bytes);
+    }
+
+    fn dimensions(&self) -> Result<&[u64]> {
+        for m in &self.prefix.messages {
+            if let Message::Dataspace(m) = &m.message {
+                return Ok(&m.dimension_sizes);
+            }
+        }
+        track_panic!(ErrorKind::Other);
+    }
+
+    fn datatype(&self) -> Result<DatatypeMessage> {
+        for m in &self.prefix.messages {
+            if let Message::Datatype(m) = &m.message {
+                return Ok(m.clone());
+            }
+        }
+        track_panic!(ErrorKind::Other);
+    }
+
+    pub fn get_data_bytes<R: Read + Seek>(&self, mut reader: R) -> Result<Vec<u8>> {
+        for m in &self.prefix.messages {
+            if let Message::DataLayout(m) = &m.message {
+                let Layout::Contiguous { address, size } = m.layout;
+                track!(reader.seek_to(address))?;
+                return track!(reader.read_vec(size as usize));
+            }
+        }
+        track_panic!(ErrorKind::Other, "Not a data object");
     }
 }
 
@@ -649,6 +688,11 @@ pub struct SymbolTableEntry {
     scratch_pad: ScratchPad,
 }
 impl SymbolTableEntry {
+    pub fn get_data_object<R: Read + Seek>(&self, mut reader: R) -> Result<DataObject> {
+        let header = track!(self.object_header(&mut reader))?;
+        track!(header.get_data_object(&mut reader))
+    }
+
     pub fn link_name<R: Read + Seek>(
         &self,
         mut reader: R,

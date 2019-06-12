@@ -8,6 +8,7 @@ edition = "2018"
 bitflags = "1"
 byteorder = "1"
 itertools = "0.8"
+ndarray = "0.12"
 trackable = "0.2"
 
 [dev-dependencies]

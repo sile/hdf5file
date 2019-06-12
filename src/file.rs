@@ -1,6 +1,7 @@
 use crate::level0::Superblock;
 use crate::level1::{BTreeNode, BTreeNodeChild, LocalHeap, SymbolTableEntry};
-use crate::{ErrorKind, Object, Result};
+use crate::level2::DataObject;
+use crate::{ErrorKind, Result};
 use std::io::{BufReader, Read, Seek};
 use std::path::{Component, Path, PathBuf};
 
@@ -18,29 +19,32 @@ where
         Ok(Self { io, superblock })
     }
 
-    pub fn get_object<P: AsRef<Path>>(&mut self, path: P) -> Result<Option<Object>> {
+    pub fn get_object<P: AsRef<Path>>(&mut self, path: P) -> Result<Option<DataObject>> {
         let mut io = BufReader::new(&mut self.io);
         let mut node = track!(Node::new(
             &mut io,
             &self.superblock.root_group_symbol_table_entry,
         ))?;
 
-        let mut components = path.as_ref().components();
+        let mut components = path.as_ref().components().peekable();
         track_assert_eq!(
             components.next(),
             Some(Component::RootDir),
             ErrorKind::InvalidInput
         );
 
-        for component in components {
+        while let Some(component) = components.next() {
             if let Component::Normal(name) = component {
                 let name = track_assert_some!(name.to_str(), ErrorKind::InvalidInput);
-                loop {
-                    if let Some((do_break, child)) = track!(node.get_child(&mut io, name))? {
+                if components.peek().is_some() {
+                    if let Some(child) = track!(node.get_dir(&mut io, name))? {
                         node = child;
-                        if do_break {
-                            break;
-                        }
+                    } else {
+                        return Ok(None);
+                    }
+                } else {
+                    if let Some(data) = track!(node.get_data(&mut io, name))? {
+                        return Ok(Some(data));
                     } else {
                         return Ok(None);
                     }
@@ -49,7 +53,7 @@ where
                 track_panic!(ErrorKind::InvalidInput);
             }
         }
-        panic!()
+        track_panic!(ErrorKind::InvalidInput);
     }
 
     pub fn objects<'a>(&'a mut self) -> Result<impl 'a + Iterator<Item = Result<PathBuf>>> {
@@ -105,7 +109,7 @@ impl Node {
         }))
     }
 
-    pub fn get_child<T>(&mut self, mut io: T, name: &str) -> Result<Option<(bool, Self)>>
+    fn get_btree_node_child<T>(&self, mut io: T, name: &str) -> Result<Option<BTreeNodeChild>>
     where
         T: Read + Seek,
     {
@@ -125,25 +129,69 @@ impl Node {
             index += 1;
         }
         if !found {
-            return Ok(None);
+            Ok(None)
+        } else {
+            let child = track_assert_some!(self.children(&mut io).nth(index), ErrorKind::Other);
+            Ok(Some(track!(child)?))
         }
+    }
 
-        let child = track_assert_some!(self.children(&mut io).nth(index), ErrorKind::Other);
-        match track!(child)? {
-            BTreeNodeChild::Intermediate(child) => {
+    pub fn get_dir<T>(&self, mut io: T, name: &str) -> Result<Option<Self>>
+    where
+        T: Read + Seek,
+    {
+        let child = track!(self.get_btree_node_child(&mut io, name))?;
+        match child {
+            None => Ok(None),
+            Some(BTreeNodeChild::Intermediate(child)) => {
                 let child = Self {
                     dir: self.dir.clone(),
                     b_tree_node: child,
                     local_heap: self.local_heap.clone(),
                 };
-                Ok(Some((false, child)))
+                track!(child.get_dir(io, name))
             }
-            BTreeNodeChild::GroupLeaf(child) => {
-                // let mut child = track!(Node::new(&mut io, &child))?;
-                // child.dir = self.dir.clone();
-                // child.dir.push(name);
-                // Ok(Some((true, child)))
-                unimplemented!("{:?}", child);
+            Some(BTreeNodeChild::GroupLeaf(child)) => {
+                for entry in &child.entries {
+                    let child_name = track!(entry.link_name(&mut io, Some(&self.local_heap)))?;
+                    let child_name = track_assert_some!(child_name, ErrorKind::InvalidFile);
+                    if child_name == name {
+                        let mut child = track!(Node::new(&mut io, &entry))?;
+                        child.dir = self.dir.clone();
+                        child.dir.push(name);
+                        return Ok(Some(child));
+                    }
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    pub fn get_data<T>(&self, mut io: T, name: &str) -> Result<Option<DataObject>>
+    where
+        T: Read + Seek,
+    {
+        let child = track!(self.get_btree_node_child(&mut io, name))?;
+        match child {
+            None => Ok(None),
+            Some(BTreeNodeChild::Intermediate(child)) => {
+                let child = Self {
+                    dir: self.dir.clone(),
+                    b_tree_node: child,
+                    local_heap: self.local_heap.clone(),
+                };
+                track!(child.get_data(io, name))
+            }
+            Some(BTreeNodeChild::GroupLeaf(child)) => {
+                for entry in &child.entries {
+                    let child_name = track!(entry.link_name(&mut io, Some(&self.local_heap)))?;
+                    let child_name = track_assert_some!(child_name, ErrorKind::InvalidFile);
+                    if child_name == name {
+                        let data = track!(entry.get_data_object(&mut io))?;
+                        return Ok(Some(data));
+                    }
+                }
+                Ok(None)
             }
         }
     }
