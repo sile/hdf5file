@@ -1,3 +1,4 @@
+use ndarray;
 use trackable::error::{ErrorKind as TrackableErrorKind, ErrorKindExt, Failure, TrackableError};
 
 #[derive(Debug, Clone, TrackableError)]
@@ -15,6 +16,11 @@ impl From<std::io::Error> for Error {
 impl From<std::string::FromUtf8Error> for Error {
     fn from(f: std::string::FromUtf8Error) -> Self {
         ErrorKind::InvalidFile.cause(f).into()
+    }
+}
+impl From<ndarray::ShapeError> for Error {
+    fn from(f: ndarray::ShapeError) -> Self {
+        ErrorKind::InvalidInput.cause(f).into()
     }
 }
 

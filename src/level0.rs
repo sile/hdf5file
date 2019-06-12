@@ -2,6 +2,7 @@ use crate::io::{ReadExt as _, SeekExt as _};
 use crate::level2::{DataItem, DataObject};
 use crate::{Error, ErrorKind, Result};
 use itertools::Either;
+use ndarray;
 use std;
 use std::convert::TryFrom;
 use std::io::{Read, Seek};
@@ -101,20 +102,28 @@ impl ObjectHeader {
 
     pub fn get_data_object<R: Read + Seek>(&self, mut reader: R) -> Result<DataObject> {
         let bytes = track!(self.get_data_bytes(&mut reader))?;
-        let dimensions = track!(self.dimensions())?;
+        let dimensions = track!(self.dimensions())?
+            .iter()
+            .map(|&d| d as usize)
+            .collect::<Vec<_>>();
         let datatype = track!(self.datatype())?;
-        dbg!(&dimensions);
-        dbg!(&datatype);
 
-        let count = dimensions.iter().cloned().sum::<u64>();
+        let count = dimensions.iter().cloned().product::<usize>();
         let mut reader = &bytes[..];
-        let items = (0..count)
-            .map(|i| track!(datatype.decode(&mut reader); i))
-            .collect::<Result<Vec<_>>>()?;
-        track_assert_eq!(reader, b"", ErrorKind::InvalidFile);
-        dbg!(items);
+        match datatype {
+            DatatypeMessage::FloatingPoint(t) => {
+                let items = (0..count)
+                    .map(|i| track!(t.decode(&mut reader); i))
+                    .collect::<Result<Vec<_>>>()?;
+                track_assert_eq!(reader, b"", ErrorKind::InvalidFile);
 
-        unimplemented!("{:?}", bytes);
+                let items = track!(ndarray::aview1(&items)
+                    .into_shape(dimensions)
+                    .map_err(Error::from))?;
+                return Ok(DataObject::Float(items.to_owned()));
+            }
+            _ => track_panic!(ErrorKind::Unsupported),
+        }
     }
 
     fn dimensions(&self) -> Result<&[u64]> {
@@ -465,7 +474,7 @@ pub enum DatatypeMessage {
     Array,
 }
 impl DatatypeMessage {
-    pub fn decode<R: Read>(&self, mut reader: R) -> Result<DataItem> {
+    pub fn decode<R: Read>(&self, reader: R) -> Result<DataItem> {
         match self {
             DatatypeMessage::FloatingPoint(t) => track!(t.decode(reader)).map(DataItem::Float),
             _ => track_panic!(ErrorKind::Unsupported),
