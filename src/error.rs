@@ -1,6 +1,9 @@
 use ndarray;
-use trackable::error::{ErrorKind as TrackableErrorKind, ErrorKindExt, Failure, TrackableError};
+use trackable::error::{
+    ErrorKind as TrackableErrorKind, ErrorKindExt, Failed, Failure, TrackableError,
+};
 
+/// This crate specific `Error` type.
 #[derive(Debug, Clone, TrackableError)]
 pub struct Error(TrackableError<ErrorKind>);
 impl From<Failure> for Error {
@@ -23,13 +26,28 @@ impl From<ndarray::ShapeError> for Error {
         ErrorKind::InvalidInput.cause(f).into()
     }
 }
+impl From<Error> for Failure {
+    fn from(f: Error) -> Self {
+        Failed.takes_over(f).into()
+    }
+}
 
-#[derive(Debug, Clone)]
+/// Possible error kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrorKind {
+    /// Input is invalid.
     InvalidInput,
+
+    /// Wrong HDF5 file.
     InvalidFile,
+
+    /// Unsupported feature.
     Unsupported,
+
+    /// I/O error.
     IoError,
+
+    /// Other erorr.
     Other,
 }
 impl TrackableErrorKind for ErrorKind {}

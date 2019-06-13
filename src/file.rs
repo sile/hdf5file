@@ -1,22 +1,42 @@
 use crate::level0::Superblock;
 use crate::level1::{BTreeNode, BTreeNodeChild, LocalHeap, SymbolTableEntry};
 use crate::level2::DataObject;
-use crate::{ErrorKind, Result};
+use crate::{Error, ErrorKind, Result};
+use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::{Component, Path, PathBuf};
 
+/// HDF5 file.
 #[derive(Debug)]
-pub struct Hdf5File<T> {
+pub struct Hdf5File<T = File> {
     io: T,
     superblock: Superblock,
+}
+impl Hdf5File<File> {
+    /// Makes a new `Hdf5File` instance by opening the specified file.
+    pub fn open_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let file = track!(File::open(path).map_err(Error::from))?;
+        track!(Self::open(file))
+    }
 }
 impl<T> Hdf5File<T>
 where
     T: Read + Seek,
 {
-    pub fn new(mut io: T) -> Result<Self> {
+    /// Makes a new `Hdf5File` instance by reading data from the given I/O stream.
+    pub fn open(mut io: T) -> Result<Self> {
         let superblock = track!(Superblock::from_reader(&mut io))?;
         Ok(Self { io, superblock })
+    }
+
+    /// Returns an iterator that iterates over the paths of all objects stored in the file.
+    pub fn object_paths<'a>(&'a mut self) -> Result<impl 'a + Iterator<Item = Result<PathBuf>>> {
+        let mut io = BufReader::new(&mut self.io);
+        let root = track!(Node::new(
+            &mut io,
+            &self.superblock.root_group_symbol_table_entry,
+        ))?;
+        Ok(Objects::new(io, root))
     }
 
     pub fn get_object<P: AsRef<Path>>(&mut self, path: P) -> Result<Option<DataObject>> {
@@ -54,15 +74,6 @@ where
             }
         }
         track_panic!(ErrorKind::InvalidInput);
-    }
-
-    pub fn objects<'a>(&'a mut self) -> Result<impl 'a + Iterator<Item = Result<PathBuf>>> {
-        let mut io = BufReader::new(&mut self.io);
-        let root = track!(Node::new(
-            &mut io,
-            &self.superblock.root_group_symbol_table_entry,
-        ))?;
-        Ok(Objects::new(io, root))
     }
 }
 
@@ -205,7 +216,7 @@ impl Node {
 }
 
 #[derive(Debug)]
-pub struct Objects<T> {
+struct Objects<T> {
     io: T,
     nodes: Vec<Node>,
     paths: Vec<PathBuf>,
