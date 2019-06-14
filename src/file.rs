@@ -1,7 +1,7 @@
 use crate::level0::Superblock;
 use crate::level1::{BTreeNode, BTreeNodeChild, LocalHeap, SymbolTableEntry};
 use crate::level2::DataObject;
-use crate::{Error, ErrorKind, Result};
+use crate::{Error, ErrorKind, Group, Result};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::{Component, Path, PathBuf};
@@ -38,6 +38,13 @@ where
         ))?;
         Ok(Objects::new(io, root))
     }
+
+    // pub fn get_root_group(&mut self) -> Result<Group> {
+    //     track!(Group::new(
+    //         &mut self.io,
+    //         self.superblock.root_group_symbol_table_entry
+    //     ))
+    // }
 
     pub fn get_object<P: AsRef<Path>>(&mut self, path: P) -> Result<Option<DataObject>> {
         let mut io = BufReader::new(&mut self.io);
