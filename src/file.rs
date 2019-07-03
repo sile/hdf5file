@@ -63,12 +63,10 @@ where
                     } else {
                         return Ok(None);
                     }
+                } else if let Some(data) = track!(node.get_data(&mut io, name))? {
+                    return Ok(Some(data));
                 } else {
-                    if let Some(data) = track!(node.get_data(&mut io, name))? {
-                        return Ok(Some(data));
-                    } else {
-                        return Ok(None);
-                    }
+                    return Ok(None);
                 }
             } else {
                 track_panic!(ErrorKind::InvalidInput);

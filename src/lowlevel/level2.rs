@@ -43,7 +43,7 @@ impl ObjectHeader {
                 let items = track!(ndarray::aview1(&items)
                     .into_shape(dimensions)
                     .map_err(Error::from))?;
-                return Ok(DataObject::Float(items.to_owned()));
+                Ok(DataObject::Float(items.to_owned()))
             }
             _ => track_panic!(ErrorKind::Unsupported),
         }
@@ -100,7 +100,7 @@ impl ObjectHeaderPrefix {
         // Header messages are aligned on 8-byte boundaries for version 1 object headers.
         track!(reader.skip(4))?;
 
-        let mut reader = reader.take(object_header_size as u64);
+        let mut reader = reader.take(u64::from(object_header_size));
         let messages = (0..header_message_count)
             .map(|_| track!(HeaderMessage::from_reader(&mut reader)))
             .collect::<Result<_>>()?;
