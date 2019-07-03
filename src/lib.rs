@@ -12,6 +12,7 @@ extern crate trackable;
 
 pub use self::error::{Error, ErrorKind};
 pub use self::file::Hdf5File;
+pub use lowlevel::level2::DataObject;
 
 mod error;
 mod file;

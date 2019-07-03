@@ -6,8 +6,10 @@ use std;
 use std::convert::TryFrom;
 use std::io::{Read, Seek};
 
+/// Data object.
 #[derive(Debug)]
 pub enum DataObject {
+    /// Floating-point numbers.
     Float(ArrayD<f64>),
 }
 
