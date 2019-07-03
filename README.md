@@ -7,6 +7,8 @@ hdf5file
 [![Code Coverage](https://codecov.io/gh/sile/hdf5file/branch/master/graph/badge.svg)](https://codecov.io/gh/sile/hdf5file/branch/master)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A Rust implementation of [HDF5 File Format]
+A Rust implementation of [HDF5 File Format].
+
+Note that this crate is in a very early stage of development and not intended to be used for production purposes.
 
 [HDF5 File Format]: https://support.hdfgroup.org/HDF5/doc/H5.format.html
