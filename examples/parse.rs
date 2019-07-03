@@ -25,7 +25,7 @@ fn main() -> trackable::result::TopLevelResult {
     let h = track!(s.root_group_symbol_table_entry.object_header(&mut file))?;
     println!("Root Object Header: {:?}", h);
 
-    let h = track!(s.root_group_symbol_table_entry.local_heaps(&mut file))?;
+    let h = track!(s.root_group_symbol_table_entry.local_heap(&mut file))?;
     let h = track_assert_some!(h, trackable::error::Failed);
     println!("Local Heaps: {:?}", h);
 
@@ -54,7 +54,7 @@ fn main() -> trackable::result::TopLevelResult {
                         );
 
                         let node = entry.b_tree_node(&mut file)?;
-                        let heap = entry.local_heaps(&mut file)?;
+                        let heap = entry.local_heap(&mut file)?;
                         println!("# {:?}", node);
                         let (node, heap) = if let (Some(n), Some(h)) = (node, heap) {
                             (n, h)

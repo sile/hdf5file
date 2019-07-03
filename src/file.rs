@@ -98,7 +98,7 @@ impl Node {
         let b_tree_node = track!(symbol_table.b_tree_node(&mut io))?;
         let b_tree_node = track_assert_some!(b_tree_node, ErrorKind::InvalidInput);
 
-        let local_heap = track!(symbol_table.local_heaps(&mut io))?;
+        let local_heap = track!(symbol_table.local_heap(&mut io))?;
         let local_heap = track_assert_some!(local_heap, ErrorKind::InvalidInput);
         Ok(Self {
             dir: PathBuf::from("/"),
@@ -118,7 +118,7 @@ impl Node {
             return Ok(None);
         };
 
-        let local_heap = track!(symbol_table.local_heaps(&mut io))?;
+        let local_heap = track!(symbol_table.local_heap(&mut io))?;
         let local_heap = track_assert_some!(local_heap, ErrorKind::InvalidInput);
         Ok(Some(Self {
             dir: PathBuf::from("/"),
