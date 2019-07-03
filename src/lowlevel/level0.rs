@@ -1,5 +1,5 @@
 use crate::io::{ReadExt as _, SeekExt as _};
-use crate::level2::{DataItem, DataObject};
+use crate::lowlevel::level2::DataObject;
 use crate::{Error, ErrorKind, Result};
 use itertools::Either;
 use ndarray;
@@ -463,23 +463,23 @@ impl FixedPointDatatype {
 pub enum DatatypeMessage {
     FixedPoint(FixedPointDatatype),
     FloatingPoint(FloatingPointDatatype),
-    Time,
-    String,
-    BitField,
-    Opaque,
-    Compound,
-    Reference,
-    Enumerated,
-    VariableLength,
-    Array,
+    // Time,
+    // String,
+    // BitField,
+    // Opaque,
+    // Compound,
+    // Reference,
+    // Enumerated,
+    // VariableLength,
+    // Array,
 }
 impl DatatypeMessage {
-    pub fn decode<R: Read>(&self, reader: R) -> Result<DataItem> {
-        match self {
-            DatatypeMessage::FloatingPoint(t) => track!(t.decode(reader)).map(DataItem::Float),
-            _ => track_panic!(ErrorKind::Unsupported),
-        }
-    }
+    // pub fn decode<R: Read>(&self, reader: R) -> Result<DataItem> {
+    //     match self {
+    //         DatatypeMessage::FloatingPoint(t) => track!(t.decode(reader)).map(DataItem::Float),
+    //         _ => track_panic!(ErrorKind::Unsupported),
+    //     }
+    // }
 
     pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
         let class_and_version = track!(reader.read_u8())?;
@@ -605,27 +605,27 @@ impl ObjectModificationTimeMessage {
 pub enum Message {
     Nil(NilMessage),
     Dataspace(DataspaceMessage),
-    LinkInfo,
+    // LinkInfo,
     Datatype(DatatypeMessage),
-    FillValueOld,
+    // FillValueOld,
     FillValue(FillValueMessage),
-    Link,
-    ExternalDataFile,
+    // Link,
+    // ExternalDataFile,
     DataLayout(DataLayoutMessage),
-    Bogus,
-    GroupInfo,
-    FilePipeline,
-    Attribute,
-    ObjectComment,
-    ObjectModificationTimeOld,
-    SharedMessageTable,
-    ObjectHeaderContinuation,
+    // Bogus,
+    // GroupInfo,
+    // FilePipeline,
+    // Attribute,
+    // ObjectComment,
+    // ObjectModificationTimeOld,
+    // SharedMessageTable,
+    // ObjectHeaderContinuation,
     SymbolTable(SymbolTableMessage),
     ObjectModificationTime(ObjectModificationTimeMessage),
-    BTreeKValues,
-    DriverInfo,
-    AttributeInfo,
-    ObjectReferenceCount,
+    // BTreeKValues,
+    // DriverInfo,
+    // AttributeInfo,
+    // ObjectReferenceCount,
 }
 
 /// https://support.hdfgroup.org/HDF5/doc/H5.format.html#LocalHeap

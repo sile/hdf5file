@@ -1,7 +1,7 @@
-use crate::level0::Superblock;
-use crate::level1::{BTreeNode, BTreeNodeChild, LocalHeap, SymbolTableEntry};
-use crate::level2::DataObject;
-use crate::{Error, ErrorKind, Group, Result};
+use crate::lowlevel::level0::Superblock;
+use crate::lowlevel::level1::{BTreeNode, BTreeNodeChild, LocalHeap, SymbolTableEntry};
+use crate::lowlevel::level2::DataObject;
+use crate::{Error, ErrorKind, Result};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::{Component, Path, PathBuf};
