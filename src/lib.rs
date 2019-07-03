@@ -1,6 +1,8 @@
 //! An implementation of [HDF5 File Format].
 //!
 //! [HDF5 File Format]: https://support.hdfgroup.org/HDF5/doc/H5.format.html
+#![warn(missing_docs)]
+
 #[macro_use]
 extern crate bitflags;
 #[macro_use]

@@ -39,13 +39,7 @@ where
         Ok(Objects::new(io, root))
     }
 
-    // pub fn get_root_group(&mut self) -> Result<Group> {
-    //     track!(Group::new(
-    //         &mut self.io,
-    //         self.superblock.root_group_symbol_table_entry
-    //     ))
-    // }
-
+    /// Returns a data object associated with the given path.
     pub fn get_object<P: AsRef<Path>>(&mut self, path: P) -> Result<Option<DataObject>> {
         let mut io = BufReader::new(&mut self.io);
         let mut node = track!(Node::new(
