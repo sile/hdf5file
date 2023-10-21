@@ -30,9 +30,10 @@ fn main() -> trackable::result::TopLevelResult {
         }
         Op::Ls => {
             for object_path in track!(file.object_paths())? {
+                let tracked_path = track!(object_path)?;
                 println!(
                     "{}",
-                    track_assert_some!(track!(object_path)?.to_str(), trackable::error::Failed)
+                    track_assert_some!(tracked_path.to_str(), trackable::error::Failed)
                 );
             }
         }
